@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Runs the kaniko executor in a disposable chroot. kaniko unpacks base images
+# over / and deletes everything it does not ignore, so it must never run
+# directly in the runner's filesystem.
+#
+# Usage: kaniko-build [--context=DIR] [executor flags...]
+#   --context        local directory, copied into the chroot (default: $PWD)
+#   --digest-file, --image-name-with-digest-file, --image-name-tag-with-digest-file,
+#   --tar-path       written back to the given host paths
+# GitHub Actions cache variables (ACTIONS_RUNTIME_TOKEN, ACTIONS_CACHE_URL,
+# ACTIONS_RESULTS_URL, ACTIONS_CACHE_SERVICE_V2) are passed through, so
+# --cache-repo=gha works once they are exported to the step. A Docker config
+# for registry auth is taken from $DOCKER_CONFIG/config.json or ~/.docker/config.json.
+set -euo pipefail
+
+pass_env=(ACTIONS_RUNTIME_TOKEN ACTIONS_CACHE_URL ACTIONS_RESULTS_URL ACTIONS_CACHE_SERVICE_V2 ACTIONS_CACHE_API_FORCE_VERSION)
+
+if [ "$(id -u)" != 0 ]; then
+  docker_config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+  exec sudo -n --preserve-env="$(IFS=,; echo "${pass_env[*]}")" \
+    KANIKO_BUILD_DOCKER_CONFIG="${docker_config}" KANIKO_BUILD_PWD="${PWD}" "$0" "$@"
+fi
+
+cd "${KANIKO_BUILD_PWD:-$PWD}"
+context="$PWD"
+args=()
+outputs=()
+for arg in "$@"; do
+  case "${arg}" in
+    --context=*)
+      context="${arg#--context=}" ;;
+    --digest-file=*|--image-name-with-digest-file=*|--image-name-tag-with-digest-file=*|--tar-path=*)
+      flag="${arg%%=*}" host="$(realpath -m "${arg#*=}")"
+      outputs+=("/kaniko/out/${#outputs[@]}=${host}")
+      args+=("${flag}=/kaniko/out/$(( ${#outputs[@]} - 1 ))") ;;
+    *)
+      args+=("${arg}") ;;
+  esac
+done
+
+root="$(mktemp -d /tmp/kaniko-root.XXXXXX)"
+cleanup() {
+  for m in dev proc; do
+    mountpoint -q "${root}/${m}" && umount -R -l "${root}/${m}"
+  done
+  if ! grep -q " ${root}/" /proc/self/mounts; then
+    rm -rf --one-file-system "${root}"
+  fi
+}
+trap cleanup EXIT
+
+mkdir -p "${root}"/{kaniko/ssl/certs,kaniko/.docker,kaniko/context,kaniko/out,etc,proc,dev,tmp}
+chmod 1777 "${root}/tmp"
+cp /opt/kaniko/executor "${root}/kaniko/"
+cp /etc/ssl/certs/ca-certificates.crt "${root}/kaniko/ssl/certs/"
+cp -L /etc/resolv.conf /etc/hosts "${root}/etc/"
+if [ -f "${KANIKO_BUILD_DOCKER_CONFIG:-}" ]; then
+  cp "${KANIKO_BUILD_DOCKER_CONFIG}" "${root}/kaniko/.docker/config.json"
+fi
+cp -a "${context}/." "${root}/kaniko/context/"
+mount -t proc proc "${root}/proc"
+mount --rbind /dev "${root}/dev"
+
+env_args=(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
+  DOCKER_CONFIG=/kaniko/.docker SSL_CERT_DIR=/kaniko/ssl/certs)
+for name in "${pass_env[@]}"; do
+  if [ -n "${!name:-}" ]; then env_args+=("${name}=${!name}"); fi
+done
+
+status=0
+env -i "${env_args[@]}" chroot "${root}" /kaniko/executor --force \
+  --context=dir:///kaniko/context \
+  --ignore-path=/etc/hosts --ignore-path=/etc/resolv.conf \
+  "${args[@]}" || status=$?
+
+for output in "${outputs[@]}"; do
+  src="${root}${output%%=*}" dst="${output#*=}"
+  if [ -e "${src}" ]; then
+    mkdir -p "$(dirname "${dst}")"
+    cp "${src}" "${dst}"
+    chown "${SUDO_UID:-0}:${SUDO_GID:-0}" "${dst}"
+  fi
+done
+exit "${status}"
