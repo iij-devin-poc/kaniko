@@ -150,6 +150,14 @@ func (m *mockRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	return &http.Response{Body: io.NopCloser(bytes.NewBufferString(ua))}, nil
 }
 
+func TestPushLayerToGHACacheNoPushCache(t *testing.T) {
+	t.Setenv("ACTIONS_RUNTIME_TOKEN", "")
+	opts := &config.KanikoOptions{CacheRepo: "gha", NoPushCache: true}
+	if err := pushLayerToCache(opts, "abc", "/does-not-exist.tar", "RUN true"); err != nil {
+		t.Fatalf("expected --no-push-cache to skip the GitHub Actions cache, got %s", err)
+	}
+}
+
 func TestOCILayoutPath(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -387,6 +395,19 @@ func TestCheckPushPermissions(t *testing.T) {
 			cacheRepo:                       "oci:/some-layout-path",
 			checkPushPermsExpectedCallCount: 0,
 			noPush:                          true,
+		},
+		{
+			description:                     "no push and cache repo is GitHub Actions cache",
+			destinations:                    []string{"us-central1-docker.pkg.dev/prj/test-image"},
+			cacheRepo:                       "gha",
+			checkPushPermsExpectedCallCount: 0,
+			noPush:                          true,
+		},
+		{
+			description:                     "push and cache repo is GitHub Actions cache",
+			destinations:                    []string{"us-central1-docker.pkg.dev/prj/test-image"},
+			cacheRepo:                       "gha:app",
+			checkPushPermsExpectedCallCount: 1,
 		},
 	}
 

@@ -101,6 +101,8 @@ func CheckPushPermissions(opts *config.KanikoOptions) error {
 		// instead of the destinations
 		if isOCILayout(opts.CacheRepo) {
 			targets = []string{} // no need to check push permissions if we're just writing to disk
+		} else if cache.IsGHA(opts.CacheRepo) {
+			targets = []string{} // the GitHub Actions cache is not a registry
 		} else {
 			targets = []string{opts.CacheRepo}
 		}
@@ -352,6 +354,11 @@ func writeImageOutputs(image v1.Image, destRefs []name.Tag) error {
 // pushLayerToCache pushes layer (tagged with cacheKey) to opts.CacheRepo
 // if opts.CacheRepo doesn't exist, infer the cache from the given destination
 func pushLayerToCache(opts *config.KanikoOptions, cacheKey string, tarPath string, createdBy string) error {
+	gha := cache.IsGHA(opts.CacheRepo)
+	if gha && opts.NoPushCache {
+		logrus.Infof("Skipping push of layer %s to GitHub Actions cache because --no-push-cache is set", cacheKey)
+		return nil
+	}
 	var layerOpts []tarball.LayerOption
 	if opts.CompressedCaching == true {
 		layerOpts = append(layerOpts, tarball.WithCompressedCaching)
@@ -374,11 +381,14 @@ func pushLayerToCache(opts *config.KanikoOptions, cacheKey string, tarPath strin
 		return err
 	}
 
-	cache, err := cache.Destination(opts, cacheKey)
+	cacheDest, err := cache.Destination(opts, cacheKey)
 	if err != nil {
 		return errors.Wrap(err, "getting cache destination")
 	}
-	logrus.Infof("Pushing layer %s to cache now", cache)
+	if gha {
+		cacheDest = cache.GHAKey(opts.CacheRepo, cacheKey)
+	}
+	logrus.Infof("Pushing layer %s to cache now", cacheDest)
 	empty := empty.Image
 	empty, err = mutate.CreatedAt(empty, v1.Time{Time: time.Now()})
 	if err != nil {
@@ -397,14 +407,17 @@ func pushLayerToCache(opts *config.KanikoOptions, cacheKey string, tarPath strin
 	if err != nil {
 		return errors.Wrap(err, "appending layer onto empty image")
 	}
+	if gha {
+		return cache.SaveGHA(opts, cacheKey, empty)
+	}
 	cacheOpts := *opts
 	cacheOpts.TarPath = ""              // tarPath doesn't make sense for Docker layers
 	cacheOpts.NoPush = opts.NoPushCache // we do not want to push cache if --no-push-cache is set.
-	cacheOpts.Destinations = []string{cache}
+	cacheOpts.Destinations = []string{cacheDest}
 	cacheOpts.InsecureRegistries = opts.InsecureRegistries
 	cacheOpts.SkipTLSVerifyRegistries = opts.SkipTLSVerifyRegistries
-	if isOCILayout(cache) {
-		cacheOpts.OCILayoutPath = strings.TrimPrefix(cache, "oci:")
+	if isOCILayout(cacheDest) {
+		cacheOpts.OCILayoutPath = strings.TrimPrefix(cacheDest, "oci:")
 		cacheOpts.NoPush = true
 	}
 	return DoPush(empty, &cacheOpts)
