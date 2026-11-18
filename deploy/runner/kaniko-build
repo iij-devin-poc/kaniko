@@ -18,8 +18,8 @@
 #   NET_RAW NET_BIND_SERVICE  running binaries with those file capabilities
 #                      (e.g. ping), raw sockets and ports below 1024 in RUN
 #   SETPCAP            dropping capabilities in RUN (capsh, setpriv)
-# AUDIT_WRITE is not needed; without it sudo only warns
-# "unable to send audit message".
+#   AUDIT_WRITE        sudo audit records (without it sudo only warns
+#                      "unable to send audit message")
 #
 # Usage: kaniko-build [--context=DIR] [executor flags...]
 #   --context        local directory, copied into the chroot (default: $PWD)
