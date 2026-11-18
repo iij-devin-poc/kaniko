@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Registers the runner on first start (when RUNNER_URL and RUNNER_TOKEN are
+# set) and then runs it. Without them, waits so the runner can be configured
+# with `docker exec -it <container> ./config.sh ...` and the container restarted.
+set -euo pipefail
+cd /home/runner
+
+if [ ! -f .runner ]; then
+  if [ -z "${RUNNER_URL:-}" ] || [ -z "${RUNNER_TOKEN:-}" ]; then
+    echo "Runner is not configured. Set RUNNER_URL and RUNNER_TOKEN, or run ./config.sh in this container and restart it."
+    exec sleep infinity
+  fi
+  ./config.sh --unattended --replace \
+    --url "${RUNNER_URL}" --token "${RUNNER_TOKEN}" \
+    --name "${RUNNER_NAME:-$(hostname)}" \
+    --labels "${RUNNER_LABELS:-kaniko}" \
+    --no-default-labels
+fi
+
+exec ./run.sh

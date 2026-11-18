@@ -1,0 +1,122 @@
+name: kaniko GHA cache e2e (self-hosted)
+
+# Runs on a runner built from deploy/runner/Dockerfile and registered with the
+# "kaniko" label.
+
+on:
+  push:
+    branches-ignore:
+      - 'main'
+    paths:
+      - '.github/workflows/gha-cache-e2e.yaml'
+      - 'deploy/runner/**'
+      - 'hack/gha-cache-e2e/**'
+      - 'hack/kaniko-features/**'
+      - 'pkg/cache/**'
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  SCOPE: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  same-job:
+    runs-on: [kaniko]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Expose GitHub Actions cache credentials to run steps
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_CACHE_SERVICE_V2']) {
+              if (process.env[name]) core.exportVariable(name, process.env[name])
+            }
+
+      - name: The runner has no capabilities beyond the allowed set
+        run: |
+          # CHOWN DAC_OVERRIDE FOWNER FSETID KILL SETGID SETUID SETPCAP NET_BIND_SERVICE
+          # NET_RAW SYS_CHROOT MKNOD AUDIT_WRITE SETFCAP
+          allowed=0xa80425fb
+          bnd=0x$(awk '/^CapBnd:/ {print $2}' /proc/1/status)
+          echo "CapBnd=${bnd} allowed=${allowed}"
+          [ $(( bnd & ~allowed )) = 0 ] || { echo "::error::the runner has capabilities outside ${allowed}"; exit 1; }
+
+      - name: Summary header
+        run: |
+          {
+            echo "| build | cache repo | time | cache hits | cache misses | layers saved | digest | image contents |"
+            echo "|---|---|---|---|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cold build (empty cache scope, saves 3 layers)
+        id: cold
+        run: hack/gha-cache-e2e/build.sh cold "$SCOPE" 0 1 3
+
+      - name: Warm build (same scope, all layers from the cache)
+        id: warm
+        run: hack/gha-cache-e2e/build.sh warm "$SCOPE" 3 0 0
+
+      - name: Warm build reproduces the cold image and is faster
+        env:
+          COLD_DIGEST: ${{ steps.cold.outputs.digest }}
+          WARM_DIGEST: ${{ steps.warm.outputs.digest }}
+          COLD_SECONDS: ${{ steps.cold.outputs.seconds }}
+          WARM_SECONDS: ${{ steps.warm.outputs.seconds }}
+        run: |
+          echo "cold ${COLD_SECONDS}s ${COLD_DIGEST}"
+          echo "warm ${WARM_SECONDS}s ${WARM_DIGEST}"
+          [ "$COLD_DIGEST" = "$WARM_DIGEST" ] || { echo "::error::digests differ"; exit 1; }
+          [ "$WARM_SECONDS" -lt "$COLD_SECONDS" ] || { echo "::error::warm build was not faster"; exit 1; }
+
+      - name: Changed COPY input (2 layers before it hit, the RUN after it is rebuilt)
+        run: |
+          echo "changed payload" > hack/gha-cache-e2e/payload.txt
+          hack/gha-cache-e2e/build.sh changed-copy "$SCOPE" 2 1 1
+
+      - name: Dockerfile features that need capabilities (apt, USER, chown, setuid, setcap, ping)
+        run: hack/kaniko-features/build.sh "gha:$SCOPE-features"
+
+  other-job:
+    needs: same-job
+    runs-on: [kaniko]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Expose GitHub Actions cache credentials to run steps
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_CACHE_SERVICE_V2']) {
+              if (process.env[name]) core.exportVariable(name, process.env[name])
+            }
+
+      - name: Summary header
+        run: |
+          {
+            echo "| build | cache repo | time | cache hits | cache misses | layers saved | digest | image contents |"
+            echo "|---|---|---|---|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Warm build in a new job (cache restored from the cache service)
+        run: hack/gha-cache-e2e/build.sh other-job "$SCOPE" 3 0 0
+
+      - name: Different scope does not see the cache
+        run: hack/gha-cache-e2e/build.sh other-scope "$SCOPE-other" 0 1 3
+
+      - name: Without the cache credentials the build fails clearly
+        run: |
+          status=0
+          env -u ACTIONS_RUNTIME_TOKEN kaniko-build --context=hack/gha-cache-e2e --no-push --cache=true --cache-repo=gha > no-token.log 2>&1 || status=$?
+          grep "^Error:" no-token.log || true
+          [ "$status" != 0 ] || { echo "::error::build succeeded without ACTIONS_RUNTIME_TOKEN"; exit 1; }
+          grep -q "ACTIONS_RUNTIME_TOKEN is not set" no-token.log
