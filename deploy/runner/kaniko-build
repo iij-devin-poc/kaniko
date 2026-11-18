@@ -3,11 +3,23 @@
 # over / and deletes everything it does not ignore, so it must never run
 # directly in the runner's filesystem.
 #
-# It needs no capabilities beyond the container runtime defaults (SYS_CHROOT,
-# MKNOD, CHOWN, ...): nothing is mounted. /dev gets the basic device nodes and
-# /proc holds only a mountinfo listing /proc and /dev, so kaniko leaves them
-# alone. There is no real procfs in the chroot, so RUN steps that need one
-# (e.g. ps, or /proc/self/fd) do not work.
+# Nothing is mounted: /dev gets the basic device nodes and /proc holds only a
+# mountinfo listing /proc and /dev, so kaniko leaves them alone. There is no
+# real procfs in the chroot, so RUN steps that need one (e.g. ps, or
+# /proc/self/fd) do not work.
+#
+# Capabilities the container needs (hack/kaniko-features checks each one):
+#   SETUID SETGID      sudo; RUN as another USER; apt dropping to _apt
+#   SYS_CHROOT MKNOD   the chroot and its /dev nodes
+#   CHOWN FOWNER DAC_OVERRIDE  unpacking images; chown/chmod/writes in RUN
+#   FSETID             setuid/setgid bits on files of other users and groups
+#   SETFCAP            setcap, and packages that set file capabilities
+#   KILL               kaniko kills what a RUN step left running as another user
+#   NET_RAW NET_BIND_SERVICE  running binaries with those file capabilities
+#                      (e.g. ping), raw sockets and ports below 1024 in RUN
+#   SETPCAP            dropping capabilities in RUN (capsh, setpriv)
+# AUDIT_WRITE is not needed; without it sudo only warns
+# "unable to send audit message".
 #
 # Usage: kaniko-build [--context=DIR] [executor flags...]
 #   --context        local directory, copied into the chroot (default: $PWD)

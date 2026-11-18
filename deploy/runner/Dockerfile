@@ -20,9 +20,9 @@
 #
 # Build from the repository root:
 #   docker build -f deploy/runner/Dockerfile -t kaniko-runner .
-# Run (needs only the default container capabilities; nothing is mounted):
+# Run with only the capabilities kaniko-build needs (see kaniko-build):
 #   docker run -d --cap-drop=ALL $(printf -- '--cap-add=%s ' CHOWN DAC_OVERRIDE FOWNER FSETID \
-#     KILL SETGID SETUID SETPCAP NET_BIND_SERVICE NET_RAW SYS_CHROOT MKNOD AUDIT_WRITE SETFCAP) \
+#     KILL SETGID SETUID SETPCAP NET_BIND_SERVICE NET_RAW SYS_CHROOT MKNOD SETFCAP) \
 #     -e RUNNER_URL=https://github.com/<owner>/<repo> \
 #     -e RUNNER_TOKEN=<registration token> -e RUNNER_LABELS=kaniko kaniko-runner
 
