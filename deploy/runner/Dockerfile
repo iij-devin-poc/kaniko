@@ -20,8 +20,10 @@
 #
 # Build from the repository root:
 #   docker build -f deploy/runner/Dockerfile -t kaniko-runner .
-# Run (privileged, so kaniko-build can mount /proc and /dev into its chroot):
-#   docker run -d --privileged -e RUNNER_URL=https://github.com/<owner>/<repo> \
+# Run (needs only the default container capabilities; nothing is mounted):
+#   docker run -d --cap-drop=ALL $(printf -- '--cap-add=%s ' CHOWN DAC_OVERRIDE FOWNER FSETID \
+#     KILL SETGID SETUID SETPCAP NET_BIND_SERVICE NET_RAW SYS_CHROOT MKNOD AUDIT_WRITE SETFCAP) \
+#     -e RUNNER_URL=https://github.com/<owner>/<repo> \
 #     -e RUNNER_TOKEN=<registration token> -e RUNNER_LABELS=kaniko kaniko-runner
 
 FROM golang:1.27@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS kaniko

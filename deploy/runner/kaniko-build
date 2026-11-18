@@ -3,6 +3,12 @@
 # over / and deletes everything it does not ignore, so it must never run
 # directly in the runner's filesystem.
 #
+# It needs no capabilities beyond the container runtime defaults (SYS_CHROOT,
+# MKNOD, CHOWN, ...): nothing is mounted. /dev gets the basic device nodes and
+# /proc holds only a mountinfo listing /proc and /dev, so kaniko leaves them
+# alone. There is no real procfs in the chroot, so RUN steps that need one
+# (e.g. ps, or /proc/self/fd) do not work.
+#
 # Usage: kaniko-build [--context=DIR] [executor flags...]
 #   --context        local directory, copied into the chroot (default: $PWD)
 #   --digest-file, --image-name-with-digest-file, --image-name-tag-with-digest-file,
@@ -40,17 +46,17 @@ done
 
 root="$(mktemp -d /tmp/kaniko-root.XXXXXX)"
 cleanup() {
-  for m in dev proc; do
-    mountpoint -q "${root}/${m}" && umount -R -l "${root}/${m}"
-  done
-  if ! grep -q " ${root}/" /proc/self/mounts; then
-    rm -rf --one-file-system "${root}"
-  fi
+  rm -rf --one-file-system "${root}"
 }
 trap cleanup EXIT
 
-mkdir -p "${root}"/{kaniko/ssl/certs,kaniko/.docker,kaniko/context,kaniko/out,etc,proc,dev,tmp}
-chmod 1777 "${root}/tmp"
+mkdir -p "${root}"/{kaniko/ssl/certs,kaniko/.docker,kaniko/context,kaniko/out,etc,proc/self,dev/shm,tmp}
+chmod 1777 "${root}/tmp" "${root}/dev/shm"
+for dev in null:1:3 zero:1:5 full:1:7 random:1:8 urandom:1:9 tty:5:0; do
+  IFS=: read -r name major minor <<<"${dev}"
+  mknod -m 666 "${root}/dev/${name}" c "${major}" "${minor}"
+done
+printf '%s\n' '1 0 0:1 / /proc rw - proc proc rw' '2 0 0:2 / /dev rw - tmpfs tmpfs rw' > "${root}/proc/self/mountinfo"
 cp /opt/kaniko/executor "${root}/kaniko/"
 cp /etc/ssl/certs/ca-certificates.crt "${root}/kaniko/ssl/certs/"
 cp -L /etc/resolv.conf /etc/hosts "${root}/etc/"
@@ -58,8 +64,6 @@ if [ -f "${KANIKO_BUILD_DOCKER_CONFIG:-}" ]; then
   cp "${KANIKO_BUILD_DOCKER_CONFIG}" "${root}/kaniko/.docker/config.json"
 fi
 cp -a "${context}/." "${root}/kaniko/context/"
-mount -t proc proc "${root}/proc"
-mount --rbind /dev "${root}/dev"
 
 env_args=(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
   DOCKER_CONFIG=/kaniko/.docker SSL_CERT_DIR=/kaniko/ssl/certs)
@@ -70,6 +74,7 @@ done
 status=0
 env -i "${env_args[@]}" chroot "${root}" /kaniko/executor --force \
   --context=dir:///kaniko/context \
+  --ignore-path=/proc --ignore-path=/dev \
   --ignore-path=/etc/hosts --ignore-path=/etc/resolv.conf \
   "${args[@]}" || status=$?
 
