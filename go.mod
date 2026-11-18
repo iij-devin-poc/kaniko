@@ -39,6 +39,7 @@ require (
 	github.com/moby/go-archive v0.3.3
 	github.com/moby/moby/api v1.56.1
 	github.com/spf13/viper v1.21.0
+	github.com/tonistiigi/go-actions-cache v0.0.0-20260930145529-afe8013b5ac4
 )
 
 require github.com/googleapis/enterprise-certificate-proxy v0.3.25 // indirect
@@ -142,6 +143,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/s2a-go v0.1.11 // indirect

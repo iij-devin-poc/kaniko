@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/chainguard-dev/kaniko/pkg/buildcontext"
+	"github.com/chainguard-dev/kaniko/pkg/cache"
 	"github.com/chainguard-dev/kaniko/pkg/config"
 	"github.com/chainguard-dev/kaniko/pkg/constants"
 	"github.com/chainguard-dev/kaniko/pkg/executor"
@@ -253,7 +254,7 @@ func addKanikoOptionsFlags() {
 	RootCmd.PersistentFlags().StringVarP(&opts.Target, "target", "", "", "Set the target build stage to build")
 	RootCmd.PersistentFlags().BoolVarP(&opts.NoPush, "no-push", "", false, "Do not push the image to the registry")
 	RootCmd.PersistentFlags().BoolVarP(&opts.NoPushCache, "no-push-cache", "", false, "Do not push the cache layers to the registry")
-	RootCmd.PersistentFlags().StringVarP(&opts.CacheRepo, "cache-repo", "", "", "Specify a repository to use as a cache, otherwise one will be inferred from the destination provided; when prefixed with 'oci:' the repository will be written in OCI image layout format at the path provided")
+	RootCmd.PersistentFlags().StringVarP(&opts.CacheRepo, "cache-repo", "", "", "Specify a repository to use as a cache, otherwise one will be inferred from the destination provided; when prefixed with 'oci:' the repository will be written in OCI image layout format at the path provided; 'gha' or 'gha:<scope>' stores layers in the GitHub Actions cache service")
 	RootCmd.PersistentFlags().StringVarP(&opts.CacheDir, "cache-dir", "", "/cache", "Specify a local directory to use as a cache.")
 	RootCmd.PersistentFlags().StringVarP(&opts.DigestFile, "digest-file", "", "", "Specify a file to save the digest of the built image to.")
 	RootCmd.PersistentFlags().StringVarP(&opts.ImageNameDigestFile, "image-name-with-digest-file", "", "", "Specify a file to save the image name w/ digest of the built image to.")
@@ -355,6 +356,11 @@ func cacheFlagsValid() error {
 	// since cache can't be inferred from destination
 	if opts.CacheRepo == "" && opts.NoPush {
 		return errors.New("if using cache with --no-push, specify cache repo with --cache-repo")
+	}
+	if cache.IsGHA(opts.CacheRepo) {
+		if _, err := cache.NewGHAClient(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

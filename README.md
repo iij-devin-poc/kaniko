@@ -90,6 +90,7 @@ expect - see [Known Issues](#known-issues).
       - [Running kaniko in Docker](#running-kaniko-in-docker)
     - [Caching](#caching)
       - [Caching Layers](#caching-layers)
+      - [Caching Layers in the GitHub Actions Cache](#caching-layers-in-the-github-actions-cache)
       - [Caching Base Images](#caching-base-images)
     - [Pushing to Different Registries](#pushing-to-different-registries)
       - [Pushing to Docker Hub](#pushing-to-docker-hub)
@@ -533,6 +534,47 @@ repository for storing cached layers can be provided via the `--cache-repo`
 flag. If this flag isn't provided, a cached repo will be inferred from the
 `--destination` provided.
 
+#### Caching Layers in the GitHub Actions Cache
+
+When kaniko runs in a GitHub Actions job (github.com or GitHub Enterprise
+Server, e.g. on a self-hosted or Actions Runner Controller runner that ships
+the kaniko executor), layers can be stored in the GitHub Actions cache service
+instead of a registry, like `type=gha` in BuildKit:
+
+```shell
+executor --context=. --destination=<image> --cache=true --cache-repo=gha
+```
+
+`--cache-repo=gha:<scope>` keeps separate cache entries per scope (for example
+one scope per image). Entries are stored with the key
+`kaniko-[<scope>-]<cache key>`, so they are subject to the usual Actions cache
+branch scoping, size limits and eviction. `--cache-ttl` and `--no-push-cache`
+behave as with a registry cache, and `--no-push` does not require a registry
+cache repo.
+
+kaniko reads the cache service credentials from `ACTIONS_RUNTIME_TOKEN` and
+`ACTIONS_CACHE_URL` (cache service v1, used by GitHub Enterprise Server), or
+`ACTIONS_RESULTS_URL` when `ACTIONS_CACHE_SERVICE_V2` is set (github.com). The
+runner only passes these variables to JavaScript and container actions, not to
+`run:` steps, so export them first:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - name: Expose GitHub Actions cache credentials to run steps
+    uses: actions/github-script@v7
+    with:
+      script: |
+        for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_CACHE_SERVICE_V2']) {
+          if (process.env[name]) core.exportVariable(name, process.env[name])
+        }
+  - run: executor --context=. --destination=<image> --cache=true --cache-repo=gha
+```
+
+The exported token is available to all later steps of the job, so only use it
+in jobs that do not run untrusted code. If kaniko is started through `sudo`,
+`chroot` or a container, pass these variables through to the executor.
+
 #### Caching Base Images
 
 kaniko can cache images in a local directory that can be volume mounted into the
@@ -853,6 +895,10 @@ layers.
 If this flag is not provided, a cache repo will be inferred from the
 `--destination` flag. If `--destination=gcr.io/kaniko-project/test`, then cached
 layers will be stored in `gcr.io/kaniko-project/test/cache`.
+
+Set `--cache-repo=gha` or `--cache-repo=gha:<scope>` to store cached layers in
+the GitHub Actions cache service. See
+[Caching Layers in the GitHub Actions Cache](#caching-layers-in-the-github-actions-cache).
 
 _This flag must be used in conjunction with the `--cache=true` flag._
 

@@ -195,6 +195,11 @@ func initConfig(img partial.WithConfigFile, opts *config.KanikoOptions) (*v1.Con
 }
 
 func newLayerCache(opts *config.KanikoOptions) cache.LayerCache {
+	if cache.IsGHA(opts.CacheRepo) {
+		return &cache.GHACache{
+			Opts: opts,
+		}
+	}
 	if isOCILayout(opts.CacheRepo) {
 		return &cache.LayoutCache{
 			Opts: opts,
