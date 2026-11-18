@@ -102,7 +102,8 @@ jobs:
 
       - name: Without the cache credentials the build fails clearly
         run: |
-          if env -u ACTIONS_RUNTIME_TOKEN kaniko-build --context=hack/gha-cache-e2e --no-push --cache=true --cache-repo=gha 2>&1 | tee no-token.log; then
-            echo "::error::build succeeded without ACTIONS_RUNTIME_TOKEN"; exit 1
-          fi
+          status=0
+          env -u ACTIONS_RUNTIME_TOKEN kaniko-build --context=hack/gha-cache-e2e --no-push --cache=true --cache-repo=gha > no-token.log 2>&1 || status=$?
+          grep "^Error:" no-token.log || true
+          [ "$status" != 0 ] || { echo "::error::build succeeded without ACTIONS_RUNTIME_TOKEN"; exit 1; }
           grep -q "ACTIONS_RUNTIME_TOKEN is not set" no-token.log
